@@ -33,6 +33,18 @@ package final class SyncCoordinator {
     private(set) var logEntries: [SyncLogEntry] = []
     private(set) var requiresLogin: Bool = false
 
+    /// True while the in-flight sync was started by an `AutoSyncTrigger`
+    /// rather than by the user. Auto syncs report quietly: no progress toast,
+    /// a success toast only when something changed, and only a conflict or a
+    /// rejected login opens the sheet. A user tap mid-flight adopts the sync
+    /// and clears this, so the tap's toast gets its outcome.
+    private(set) var isAutomaticSync = false
+
+    /// Bumped to re-present the sheet for a conflict the user dismissed
+    /// without resolving — the coordinator's state is already
+    /// `.needsFullSync`, so there is no state change to observe.
+    private(set) var attentionRequest = 0
+
     var lastSuccessfulSync: Date? {
         lastSyncedAtUnix > 0 ? Date(timeIntervalSince1970: lastSyncedAtUnix) : nil
     }
@@ -49,6 +61,17 @@ package final class SyncCoordinator {
     #endif
     @ObservationIgnored private var lifecycleObservers: [any NSObjectProtocol] = []
     @ObservationIgnored private let mediaPollInterval: Duration
+    @ObservationIgnored private let autoSync: AutoSyncEnvironment
+    /// Last `.appOpen` attempt or successful sync of any kind, for the
+    /// `.appOpen` throttle. In memory on purpose: a cold launch always syncs.
+    @ObservationIgnored private var lastSyncActivity: ContinuousClock.Instant?
+    /// An automatic sync was owed but could not run (offline, failed, or a
+    /// study session was in progress). Bypasses the `.appOpen` throttle and
+    /// lets `connectivityRestored` act.
+    @ObservationIgnored private(set) var autoSyncPending = false
+    /// A review session is on screen. Automatic syncs wait for it to end so
+    /// the engine's queue is not changed under the card being answered.
+    @ObservationIgnored private var isStudying = false
 
     // Profile-scoped persisted state. Computed per access — the key embeds
     // the active profile id, and this coordinator is a singleton that
@@ -70,8 +93,12 @@ package final class SyncCoordinator {
     /// touches it first, so the old `MainActor.assumeIsolated` would abort
     /// the process on first resolution from a detached task or background
     /// test. Observer registration is main-actor work, so it hops.
-    package nonisolated init(mediaPollInterval: Duration = .milliseconds(250)) {
+    package nonisolated init(
+        mediaPollInterval: Duration = .milliseconds(250),
+        autoSync: AutoSyncEnvironment = .live
+    ) {
         self.mediaPollInterval = mediaPollInterval
+        self.autoSync = autoSync
         Task { @MainActor [self] in registerLifecycleObservers() }
     }
 
@@ -107,13 +134,24 @@ package final class SyncCoordinator {
 
     func startSync() async {
         guard activeTask == nil else {
-            appendLog("Sync already in progress", level: .warning)
+            if isAutomaticSync {
+                // Adopt the running auto sync: report its outcome loudly so
+                // the toast this tap raised gets resolved.
+                isAutomaticSync = false
+                appendLog("Sync already in progress — following it")
+            } else {
+                appendLog("Sync already in progress", level: .warning)
+            }
             return
         }
+        beginIncrementalSync(automatic: false)
+    }
 
+    private func beginIncrementalSync(automatic: Bool) {
+        isAutomaticSync = automatic
         clearLog()
         state = .syncing(message: "Connecting…")
-        appendLog("Starting sync")
+        appendLog(automatic ? "Starting automatic sync" : "Starting sync")
 
         let task = Task { [weak self] in
             guard let self else { return }
@@ -125,6 +163,9 @@ package final class SyncCoordinator {
                 self.needsFullSyncFlag = false
                 self.activeTask = nil
                 self.isCancelling = false
+                self.autoSyncPending = false
+                self.lastSyncActivity = .now
+                self.autoSync.cancelDeferred()
                 self.report(mediaFailure: mediaFailure, otherwise: summary)
                 // Sync can change counts without any review — refresh widgets
                 // or they keep showing the pre-sync collection.
@@ -149,8 +190,19 @@ package final class SyncCoordinator {
                 self.activeTask = nil
                 // A cancelled sync shouldn't surface as a failure.
                 guard !self.finishCancellationIfNeeded() else { return }
-                self.appendLog("Sync failed: \(error.localizedDescription)", level: .error)
-                self.state = .error(error.localizedDescription)
+                if self.isAutomaticSync {
+                    // Most likely the network or the server is unreachable.
+                    // Not worth interrupting the user for: retry later.
+                    self.appendLog(
+                        "Automatic sync failed: \(error.localizedDescription) — will retry",
+                        level: .warning
+                    )
+                    self.deferAutoSync()
+                    self.state = .idle
+                } else {
+                    self.appendLog("Sync failed: \(error.localizedDescription)", level: .error)
+                    self.state = .error(error.localizedDescription)
+                }
             }
         }
         activeTask = task
@@ -162,6 +214,7 @@ package final class SyncCoordinator {
             return
         }
 
+        isAutomaticSync = false
         let label = direction == .upload ? "Uploading collection" : "Downloading collection"
         state = .syncing(message: label)
         appendLog("Full sync started: \(direction == .upload ? "upload" : "download")")
@@ -196,6 +249,7 @@ package final class SyncCoordinator {
             return
         }
 
+        isAutomaticSync = false
         state = .syncing(message: "Preparing merge...")
         appendLog("Merge started")
 
@@ -234,6 +288,8 @@ package final class SyncCoordinator {
         appendLog("Signed out")
         state = .noServer
         requiresLogin = false
+        autoSyncPending = false
+        autoSync.cancelDeferred()
     }
 
     /// Called after an in-app profile switch, once the scoping anchor has
@@ -243,6 +299,9 @@ package final class SyncCoordinator {
         cancel()
         clearLog()
         requiresLogin = false
+        // The new profile has its own server and its own last-sync stamp.
+        autoSyncPending = false
+        lastSyncActivity = nil
         if needsFullSyncFlag {
             state = .needsFullSync(SyncFullSyncRequirement(
                 reason: "A full sync was requested previously and not yet completed",
@@ -292,6 +351,76 @@ package final class SyncCoordinator {
         await activeTask?.value
     }
 
+    // MARK: - Automatic sync
+
+    /// Runs an incremental sync on the user's behalf, if policy allows.
+    ///
+    /// Never resolves a conflict itself: a pending `.needsFullSync` blocks
+    /// every automatic sync, and an incremental sync that hits one stops at
+    /// `.needsFullSync`, which opens the sheet for the user to choose.
+    package func requestAutoSync(_ trigger: AutoSyncTrigger) async {
+        guard autoSync.isEnabled(), autoSync.isConfigured(), !requiresLogin else { return }
+
+        if needsFullSyncFlag || isAwaitingFullSyncChoice {
+            if trigger == .appOpen {
+                appendLog("Unresolved conflict — asking again")
+                attentionRequest += 1
+            }
+            return
+        }
+        guard activeTask == nil else { return }
+        if trigger == .connectivityRestored, !autoSyncPending { return }
+
+        if isStudying, trigger != .background {
+            autoSyncPending = true
+            return
+        }
+
+        if trigger == .appOpen, !autoSyncPending, isThrottled() { return }
+        if trigger == .appOpen { lastSyncActivity = .now }
+
+        guard autoSync.isOnline() else {
+            appendLog("Offline — automatic sync deferred until the network returns")
+            deferAutoSync()
+            return
+        }
+        beginIncrementalSync(automatic: true)
+    }
+
+    /// The `BGTaskScheduler` entry point: an automatic sync, awaited to the
+    /// end. Returns whether it succeeded. A conflict found here persists
+    /// `needsFullSyncFlag`, so the next app open prompts for it.
+    package func runBackgroundSync() async -> Bool {
+        await requestAutoSync(.background)
+        await activeTask?.value
+        if case .success = state { return true }
+        return false
+    }
+
+    private var isAwaitingFullSyncChoice: Bool {
+        if case .needsFullSync = state { return true }
+        return false
+    }
+
+    private func isThrottled() -> Bool {
+        guard let lastSyncActivity else { return false }
+        return ContinuousClock.now - lastSyncActivity < autoSync.appOpenThrottle
+    }
+
+    private func deferAutoSync() {
+        autoSyncPending = true
+        autoSync.scheduleDeferred()
+    }
+
+    private func studySessionDidStart() {
+        isStudying = true
+    }
+
+    private func studySessionDidEnd() async {
+        isStudying = false
+        await requestAutoSync(.studyFinished)
+    }
+
     // MARK: - Log helpers (used by all behaviors)
 
     func appendLog(_ message: String, level: SyncLogEntry.Level = .info) {
@@ -325,6 +454,13 @@ private extension SyncCoordinator {
             state = .success(summary)
             return
         }
+        if isAutomaticSync {
+            // The collection — the user's progress — made it. Media retries
+            // with the next sync; not worth opening the sheet unasked.
+            appendLog("Collection synced; media sync failed: \(mediaFailure)", level: .warning)
+            state = .success(summary)
+            return
+        }
         appendLog("Collection synced; media sync failed: \(mediaFailure)", level: .error)
         state = .error("Collection synced, but media failed: \(mediaFailure)")
     }
@@ -346,8 +482,8 @@ private extension SyncCoordinator {
     }
 
     func registerLifecycleObservers() {
-        #if canImport(UIKit)
         let center = NotificationCenter.default
+        #if canImport(UIKit)
         lifecycleObservers.append(center.addObserver(
             forName: UIApplication.didEnterBackgroundNotification,
             object: nil,
@@ -367,6 +503,27 @@ private extension SyncCoordinator {
             }
         })
         #endif
+        lifecycleObservers.append(center.addObserver(
+            forName: .studySessionDidStart,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.studySessionDidStart() }
+        })
+        lifecycleObservers.append(center.addObserver(
+            forName: .studySessionDidEnd,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in await self?.studySessionDidEnd() }
+        })
+        lifecycleObservers.append(center.addObserver(
+            forName: ConnectivityMonitor.restoredNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in await self?.requestAutoSync(.connectivityRestored) }
+        })
 
         if needsFullSyncFlag {
             state = .needsFullSync(SyncFullSyncRequirement(
@@ -407,7 +564,7 @@ private extension SyncCoordinator {
 
 private enum SyncCoordinatorKey: DependencyKey {
     static let liveValue = SyncCoordinator()
-    static let testValue = SyncCoordinator()
+    static let testValue = SyncCoordinator(autoSync: .disabled)
 }
 
 extension DependencyValues {

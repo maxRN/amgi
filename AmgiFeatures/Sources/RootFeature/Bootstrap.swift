@@ -58,5 +58,14 @@ public enum AmgiRoot {
         } catch {
             startupError = error.localizedDescription
         }
+
+        // Must happen before launch finishes, failed collection or not —
+        // a background launch for a scheduled sync lands here too. With no
+        // open collection the task completes without touching the engine.
+        BackgroundSyncScheduler.register {
+            guard startupError == nil else { return nil }
+            @Dependency(\.syncCoordinator) var coordinator
+            return coordinator
+        }
     }
 }

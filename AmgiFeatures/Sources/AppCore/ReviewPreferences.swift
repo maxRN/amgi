@@ -120,6 +120,9 @@ public enum SyncPreferences {
         public static let mediaLastSyncedAtBase = "sync_pref_media_last_synced_at"
         public static let lastCollectionSyncedAtBase = "sync_pref_collection_last_synced_at"
         public static let needsFullSyncBase = "sync_pref_needs_full_sync"
+        /// Global, not profile-scoped: whether the app syncs on its own on
+        /// launch, after a study session and when the network returns.
+        public static let autoSync = "sync_pref_auto_sync"
 
         public static func modeForCurrentUser() -> String {
             scoped(modeBase)
@@ -170,6 +173,11 @@ public enum SyncPreferences {
     }
 
     public static let officialServerLabel = "AnkiWeb"
+
+    /// Automatic sync is on unless the user turned it off.
+    public static var isAutoSyncEnabled: Bool {
+        UserDefaults.standard.object(forKey: Keys.autoSync) as? Bool ?? true
+    }
 
     public static func resolvedMode(_ rawValue: String) -> Mode {
         Mode(rawValue: rawValue) ?? .local

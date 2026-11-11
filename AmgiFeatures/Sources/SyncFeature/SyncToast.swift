@@ -46,6 +46,12 @@ struct SyncToast: View {
     }
 }
 
+extension SyncSummary {
+    var hasChanges: Bool {
+        cardsPushed + cardsPulled + notesPushed + notesPulled > 0
+    }
+}
+
 extension SyncToast {
     static func summaryMessage(for summary: SyncSummary) -> String {
         if summary.cardsPulled == 0 && summary.cardsPushed == 0 {

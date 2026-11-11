@@ -11,6 +11,7 @@ import Dependencies
 
 /// The whole sync flow behind one modifier: the trigger (published as
 /// `EnvironmentValues.startSync` so any toolbar below can fire it), the
+/// automatic sync on launch and on every return to the foreground, the
 /// progress/success toast, the sync sheet, and the collection invalidation
 /// each of them implies.
 ///
@@ -24,6 +25,7 @@ private struct SyncFlowModifier: ViewModifier {
     @Dependency(\.syncCoordinator) private var coordinator
     @Dependency(\.collectionStore) private var store
 
+    @Environment(\.scenePhase) private var scenePhase
     @State private var toast = SyncToastController()
     @State private var showSheet = false
 
@@ -41,9 +43,18 @@ private struct SyncFlowModifier: ViewModifier {
             .onChange(of: SyncToastController.needsAttention(coordinator.state)) { _, needs in
                 if needs { showSheet = true }
             }
+            .onChange(of: coordinator.attentionRequest) { showSheet = true }
             .onChange(of: coordinator.state) { _, newState in
-                toast.handle(newState)
+                toast.handle(newState, quiet: coordinator.isAutomaticSync)
                 if case .success = newState { store.invalidateAll() }
+            }
+            // `.task` covers the cold launch (and a profile switch, which
+            // rebuilds this subtree); `onChange` covers each later return to
+            // the foreground, which `.task` does not see.
+            .task { await coordinator.requestAutoSync(.appOpen) }
+            .onChange(of: scenePhase) { old, new in
+                guard new == .active, old == .background else { return }
+                Task { await coordinator.requestAutoSync(.appOpen) }
             }
             .syncToastOverlay(toast.toast, onDismiss: { toast.dismiss() })
     }

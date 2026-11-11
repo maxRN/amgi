@@ -14,6 +14,7 @@ import Sharing
 
 struct SyncSettingsView: View {
     @Shared(.syncMode) private var syncMode
+    @Shared(.appStorage(SyncPreferences.Keys.autoSync)) private var autoSync = true
     @State private var endpoint: String? = KeychainHelper.loadEndpoint()
     @State private var username: String? = KeychainHelper.loadUsername()
     @State private var isLoggedIn: Bool = KeychainHelper.loadHostKey() != nil
@@ -83,6 +84,17 @@ struct SyncSettingsView: View {
                 truncation: .middle
             )
         }
+
+        SettingsSectionHeader(title: "Automatic Sync")
+        SettingsGroup {
+            SettingsToggleRow(
+                title: "Sync Automatically",
+                systemImage: "arrow.clockwise.icloud",
+                tone: .mature,
+                isOn: Binding($autoSync)
+            )
+        }
+        SettingsFootnote("Syncs when you open the app and after each study session. If you're offline, Amgi tries again once you're back online, even in the background. You're always asked before a conflict is resolved.")
 
         SettingsSectionHeader(title: "Account")
         SettingsGroup {

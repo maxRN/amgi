@@ -41,6 +41,7 @@ What Amgi does today. For how it is put together, see [ARCHITECTURE.md](ARCHITEC
 - **Any compatible sync server** — AnkiWeb or self-hosted: login, incremental sync, full upload/download, media sync, and bidirectional review sync.
 - **Safe sync merge** — when local and server collections diverge, merge them (keeping cards from both sides) instead of being forced to overwrite one. Destructive choices require explicit confirmation.
 - **Multi-profile accounts** — isolated collections per profile, a fast picker in the Library toolbar, and per-profile sync credentials and review history.
+- **Automatic sync** — syncs on launch, on return to the foreground and after each study session, quietly unless something changed. Offline, it retries once the network is back, in the background if need be. Conflicts always stop and ask. Can be turned off in Settings › Sync Server.
 - **Offline-first** — everything works offline; sync when you have a connection.
 
 ## Statistics

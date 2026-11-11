@@ -74,6 +74,9 @@ package struct ReviewView: View {
         )
         .task {
             ReviewAudioSession.apply(playInSilent: playAudioInSilentMode)
+            // Holds automatic sync off for the session; the matching end
+            // notification below pushes the session's answers.
+            NotificationCenter.default.post(name: .studySessionDidStart, object: nil)
             session.start()
         }
         .alert(
@@ -92,6 +95,7 @@ package struct ReviewView: View {
         }
         .onDisappear {
             ReviewAudioSession.release()
+            NotificationCenter.default.post(name: .studySessionDidEnd, object: nil)
             Task { await writeWidgetSnapshot() }
         }
     }

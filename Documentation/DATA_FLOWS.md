@@ -19,6 +19,33 @@ are in [ARCHITECTURE.md](ARCHITECTURE.md), and the wire mechanics in
 An empty local collection reports `FULL_DOWNLOAD`, which must be acted on rather
 than reported as "already complete".
 
+### Automatic sync
+
+`SyncCoordinator.requestAutoSync(_:)` runs the same incremental sync on the
+user's behalf. Triggers:
+
+| Trigger | Fired by |
+|---|---|
+| `.appOpen` | `SyncFlowModifier` — `.task` on launch, `scenePhase` background → active. Throttled to one per 2 minutes. |
+| `.studyFinished` | `ReviewView.onDisappear` posts `.studySessionDidEnd` (AppCore), so ReviewFeature never imports SyncFeature. |
+| `.connectivityRestored` | `ConnectivityMonitor` (`NWPathMonitor`), only when a sync is owed. |
+| `.background` | `BackgroundSyncScheduler` — `BGTaskScheduler` launch. |
+
+Policy, in order: skip when turned off, signed out or awaiting a re-login; never
+sync past an unresolved conflict (on `.appOpen`, re-present the sheet instead);
+hold off while a review session is on screen; if offline, or if the sync fails,
+mark it owed and submit a `BGProcessingTaskRequest` (`requiresNetworkConnectivity`)
+plus a `BGAppRefreshTaskRequest`. A sync that hits `FULL_SYNC`/`FULL_UPLOAD`
+stops at `.needsFullSync`, which opens the sheet — automatic sync never picks a
+direction. A conflict found in the background persists `needsFullSyncFlag`, so
+the next launch asks.
+
+Auto syncs report quietly: no progress toast, and a success toast only when
+cards moved. A tap on Sync during one adopts it and reports it like a manual one.
+The task identifiers live in `AmgiApp/Info.plist` under
+`BGTaskSchedulerPermittedIdentifiers`, next to the `fetch` and `processing`
+background modes.
+
 ## Study session
 
 ```

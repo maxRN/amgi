@@ -28,8 +28,20 @@ final class SyncToastController {
         toast = .progress("Syncing\u{2026}")
     }
 
-    /// Drive the toast from a coordinator state change.
-    func handle(_ state: SyncCoordinator.SyncState) {
+    /// Drive the toast from a coordinator state change. `quiet` is set for
+    /// automatic syncs: no progress toast, and a success toast only when the
+    /// sync actually moved something.
+    func handle(_ state: SyncCoordinator.SyncState, quiet: Bool = false) {
+        if quiet {
+            switch state {
+            case .syncing, .syncingMedia:
+                return
+            case .success(let summary) where !summary.hasChanges:
+                return
+            default:
+                break
+            }
+        }
         switch state {
         case .syncing(let message):
             cancelDismiss()
