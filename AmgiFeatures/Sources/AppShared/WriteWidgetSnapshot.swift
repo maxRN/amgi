@@ -58,11 +58,15 @@ public func writeWidgetSnapshot() async {
         let rolloverHour = graphs.rolloverHour
         let dayZero = AnkiDay.start(of: now, rolloverHour: rolloverHour)
 
-        // 5. Write all-decks aggregate snapshot (deckId = 0)
+        // 5. Write all-decks aggregate snapshot (deckId = 0). Sum top-level
+        // decks only: `decks` is the flattened tree, and a parent's counts
+        // already include its subdecks (capped by its limits), so summing
+        // every row counted each subdeck card twice or more.
+        let topLevel = decks.filter { !$0.name.contains("::") }
         let aggregateBase = WidgetSnapshot.DayCounts(
-            newCount: decks.reduce(0) { $0 + $1.counts.newCount },
-            learnCount: decks.reduce(0) { $0 + $1.counts.learnCount },
-            reviewCount: decks.reduce(0) { $0 + $1.counts.reviewCount }
+            newCount: topLevel.reduce(0) { $0 + $1.counts.newCount },
+            learnCount: topLevel.reduce(0) { $0 + $1.counts.learnCount },
+            reviewCount: topLevel.reduce(0) { $0 + $1.counts.reviewCount }
         )
         let allDecksSnapshot = WidgetSnapshot(
             deckId: 0,

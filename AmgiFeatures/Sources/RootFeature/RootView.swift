@@ -9,6 +9,7 @@ public import SwiftUI
 import AppCore
 import AppShared
 import Theme
+import AnkiClients
 import AnkiKit
 import Dependencies
 import Foundation
@@ -32,6 +33,7 @@ public struct RootView: View {
     private var appFontRaw: String = AppFont.system.rawValue
 
     @Dependency(\.collectionStore) private var store
+    @Dependency(\.deckClient) private var deckClient
     @Bindable private var accountStore = AccountStore.shared
 
     @State private var pendingReviewDeckId: DeckID?
@@ -63,10 +65,24 @@ public struct RootView: View {
                           .queryItems?.first(where: { $0.name == "deckId" })?.value,
                       let deckId = Int64(deckIdStr)
                 else { return }
-                pendingReviewDeckId = DeckID(deckId)
+                Task { pendingReviewDeckId = await resolveReviewDeck(DeckID(deckId)) }
             }
             .themedRoot()
             .environment(\.appFont, AppFont(rawValue: appFontRaw) ?? .system)
+    }
+
+    /// Deck id 0 is the widget's "All Decks" aggregate, not a real deck:
+    /// `setCurrentDeck(0)` succeeds but the engine's queue builder then falls
+    /// back to the Default deck, so the tap opened an empty session while the
+    /// widget showed cards due. Resolve it to the top-level deck with the most
+    /// due cards instead (Default if nothing is due, matching the engine).
+    private func resolveReviewDeck(_ deckId: DeckID) async -> DeckID {
+        guard deckId.rawValue == 0 else { return deckId }
+        let topLevel = (try? await deckClient.fetchTree()) ?? []
+        return topLevel
+            .filter { $0.counts.total > 0 }
+            .max { $0.counts.total < $1.counts.total }?
+            .id ?? DeckID(1)
     }
 
     @ViewBuilder
