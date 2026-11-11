@@ -10,6 +10,11 @@ options:
   # below stays a `type: folder` reference at its original path, so the bundle
   # layout is unchanged — only the Xcode group tree is tidied.
   createIntermediateGroups: true
+# Bundle IDs, app group and (optionally) team come from Identity.xcconfig,
+# which includes a gitignored Local.xcconfig for per-developer overrides.
+configFiles:
+  Debug: Identity.xcconfig
+  Release: Identity.xcconfig
 settings:
   base:
     SWIFT_VERSION: "6.0"
@@ -172,13 +177,17 @@ targets:
         product: RootFeature
       - package: AmgiFeatures
         product: IntentsFeature
+      # Linked so WidgetFeature.AmgiWidgetIntent exists in the app process.
+      # See the LM_SKIP_METADATA_EXTRACTION note below for why it must.
+      - package: AmgiFeatures
+        product: WidgetFeature
       - sdk: WidgetKit.framework
       - target: AmgiWidget
         embed: true
     settings:
       base:
         INFOPLIST_FILE: Info.plist
-        PRODUCT_BUNDLE_IDENTIFIER: com.amgiapp.AmgiApp
+        PRODUCT_BUNDLE_IDENTIFIER: $(AMGI_BUNDLE_ID)
         # Dojang.icon (Resources/AppIcons); iOS 18 gets actool's flat fallback.
         ASSETCATALOG_COMPILER_APPICON_NAME: Dojang
         # Ids must match AppIconOption.alternateName (AppIconOptionTests checks).
@@ -218,7 +227,15 @@ targets:
         # AmgiWidget target), so the app's metadata again names
         # WidgetFeature.AmgiWidgetIntent, a type it doesn't link, and logs
         # "Failed to instantiate type AmgiWidgetIntent by name" on launch.
-        # Cosmetic, and the price of having any app-level intents at all.
+        #
+        # Not cosmetic (found 2026-11-01): chronod resolves the widget's
+        # *default* intent through the app bundle's metadata, so it asks the
+        # app process to instantiate AmgiWidgetIntent. While the app did not
+        # link WidgetFeature that failed (LNPerformActionErrorCodeActionNotFound),
+        # every timeline request then arrived with intent = nil and failed
+        # with CHSErrorDomain 1103, and a freshly added widget stayed on its
+        # redacted placeholder forever. The app therefore links WidgetFeature
+        # (above) so the type it advertises exists in its process.
 
   AmgiWidget:
     type: app-extension
@@ -235,7 +252,7 @@ targets:
       - sdk: SwiftUI.framework
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.amgiapp.AmgiApp.widget
+        PRODUCT_BUNDLE_IDENTIFIER: $(AMGI_BUNDLE_ID).widget
         INFOPLIST_FILE: Sources/Widgets/Info.plist
         CODE_SIGN_ENTITLEMENTS: AmgiWidget.entitlements
 
@@ -282,10 +299,10 @@ targets:
         product: Sharing
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.amgiapp.AmgiApp.watch
+        PRODUCT_BUNDLE_IDENTIFIER: $(AMGI_BUNDLE_ID).watch
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         GENERATE_INFOPLIST_FILE: YES
-        INFOPLIST_KEY_WKCompanionAppBundleIdentifier: com.amgiapp.AmgiApp
+        INFOPLIST_KEY_WKCompanionAppBundleIdentifier: $(AMGI_BUNDLE_ID)
 
   AmgiAppTests:
     type: bundle.unit-test
@@ -298,7 +315,7 @@ targets:
       base:
         BUNDLE_LOADER: $(TEST_HOST)
         TEST_HOST: $(BUILT_PRODUCTS_DIR)/AmgiApp.app/AmgiApp
-        PRODUCT_BUNDLE_IDENTIFIER: com.amgiapp.AmgiAppTests
+        PRODUCT_BUNDLE_IDENTIFIER: $(AMGI_BUNDLE_ID).tests
         GENERATE_INFOPLIST_FILE: YES
         # Tests inherit @testable AmgiApp's transitive Cxx-mode import
         # of ReaderDictionary, so they need the same Clang+Swift

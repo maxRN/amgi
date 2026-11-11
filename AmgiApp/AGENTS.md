@@ -6,8 +6,8 @@ run `xcodegen generate` after cloning and after any `project.yml` change. The
 
 ## Targets
 
-- **AmgiApp** (iOS) — links `RootFeature` and `IntentsFeature`, the WidgetKit
-  SDK, and the embedded `AmgiWidget`. `Sources/AmgiAppApp.swift` is 13 lines:
+- **AmgiApp** (iOS) — links `RootFeature`, `IntentsFeature` and
+  `WidgetFeature`, the WidgetKit SDK, and the embedded `AmgiWidget`. `Sources/AmgiAppApp.swift` is 13 lines:
   `@main`, an `init` calling `AmgiRoot.bootstrap()`, a `body` returning
   `RootView()`. `Sources/Intents/AmgiShortcuts.swift` is the only other root
   file.
@@ -34,11 +34,24 @@ iOS target proper is those two root files.
   `SyncIntentRunner` for the shape that does.
 - **`LM_SKIP_METADATA_EXTRACTION` stays off.** Setting it stops Xcode scheduling
   `ExtractAppIntentsMetadata` at all, so the app ships no `Metadata.appintents`
-  and nothing in `IntentsFeature` reaches Shortcuts. The price of leaving it off
-  is a launch-time "Failed to instantiate type …" line for the widget intent the
-  app does not link.
+  and nothing in `IntentsFeature` reaches Shortcuts.
+- **The app links `WidgetFeature`, and must.** Extraction puts
+  `AmgiWidgetIntent` into the app's metadata, and chronod resolves the widget's
+  default intent through the app process. Without the type linked there, every
+  timeline request arrives with `intent = nil`, fails with CHSErrorDomain 1103,
+  and the widget never leaves its placeholder.
 - **AppIntents metadata does extract from a SwiftPM target** — the built
   `AmgiWidget.appex` carries a complete `extract.actionsdata`.
+
+## Signing identity
+
+Bundle IDs and the app group are build settings, not literals:
+`AMGI_BUNDLE_ID` and `AMGI_APP_GROUP` in `Identity.xcconfig` (the project-level
+config file), overridable in a gitignored `Local.xcconfig`. Every target's ID
+derives from `AMGI_BUNDLE_ID`, the entitlements use `$(AMGI_APP_GROUP)`, and
+the app's and widget's Info.plist carry it as `AmgiAppGroup`, which
+`AppGroup.identifier` and Theme's `UserDefaults.amgiAppGroup` read. Don't write
+an ID into `project.yml`, an entitlements file or Swift.
 
 ## Xcode writes to the generated project
 

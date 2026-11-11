@@ -1,0 +1,6 @@
+// Copy to Local.xcconfig (gitignored), then `cd AmgiApp && xcodegen generate`.
+// See Identity.xcconfig for the rules these must keep.
+
+DEVELOPMENT_TEAM = ABCDE12345
+AMGI_BUNDLE_ID = com.example.amgi
+AMGI_APP_GROUP = group.com.example.amgi

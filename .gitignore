@@ -34,3 +34,6 @@ design/
 .build-benchmark/
 
 AmgiApp/*.xcodeproj/
+
+# Per-developer signing override (see AmgiApp/Identity.xcconfig)
+AmgiApp/Local.xcconfig

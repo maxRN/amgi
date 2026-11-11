@@ -1,0 +1,16 @@
+// Signing identity for every target. project.yml, both .entitlements files
+// and the Info.plists read these; nothing else should spell the IDs out.
+//
+// To sign under your own team, copy Local.xcconfig.example to Local.xcconfig
+// (gitignored) and override what you need. It survives `xcodegen generate`,
+// unlike edits made in Xcode's Signing tab.
+//
+// Rules the overrides must keep:
+// - every target's bundle ID starts with AMGI_BUNDLE_ID (iOS rejects an
+//   embedded widget whose ID is not prefixed by its app's);
+// - AMGI_APP_GROUP is registered to the team that signs the build.
+
+AMGI_BUNDLE_ID = com.amgiapp.AmgiApp
+AMGI_APP_GROUP = group.com.amgiapp
+
+#include? "Local.xcconfig"

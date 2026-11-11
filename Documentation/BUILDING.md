@@ -52,6 +52,25 @@ Step 1 cross-compiles for iOS device, iOS simulator and watchOS simulator, then
 packages the three slices. The first run takes several minutes; later runs are
 incremental.
 
+### Running on your own device
+
+The checked-in bundle IDs (`com.amgiapp.AmgiApp`, `….widget`, `….watch`) and
+app group (`group.com.amgiapp`) are registered to the upstream team, so your
+team cannot sign them. Don't rename them in Xcode's Signing tab — the
+project is generated, so `xcodegen generate` discards that, and renaming only
+the app leaves the widget's ID unprefixed, which iOS refuses to install.
+Instead:
+
+```bash
+cp AmgiApp/Local.xcconfig.example AmgiApp/Local.xcconfig   # gitignored
+# set DEVELOPMENT_TEAM, AMGI_BUNDLE_ID and AMGI_APP_GROUP
+cd AmgiApp && xcodegen generate
+```
+
+Every target derives its ID from `AMGI_BUNDLE_ID`; the entitlements and code
+read `AMGI_APP_GROUP`. Build once from Xcode, signed in under Settings →
+Accounts, so automatic signing registers the IDs and the app group.
+
 ### When to re-run which
 
 - **`build-xcframework.sh`** — only after changing `anki-bridge-rs/` or moving
